@@ -4,7 +4,7 @@ emoji: "📝"
 colorFrom: blue
 colorTo: purple
 sdk: docker
-pinned: false
+pinned: true
 license: mit
 ---
 
@@ -18,7 +18,7 @@ This environment supports two (and a half) interfaces:
 
 ## What's the point?
 
-[See here for a detailed explanation](), but basically: if we're to have AI co-scientists, we need to have a way to elicit their research plans and guide them, the same way we guide coding agents. They in turn need to be able to learn from our idea of what a good research plan for a given topic is. We must, in short, turn our agents into diligent grad students with good research habits and no need for ramen.
+[See here for a detailed explanation](https://huggingface.co/blog/chrisvoncsefalvay/reviewer-two-openenv), but basically: if we're to have AI co-scientists, we need to have a way to elicit their research plans and guide them, the same way we guide coding agents. They in turn need to be able to learn from our idea of what a good research plan for a given topic is. We must, in short, turn our agents into diligent grad students with good research habits and no need for ramen.
 
 ## How does it work?
 
