@@ -50,7 +50,11 @@ class ResearchPlanAction(Action):
     # Submit mode field
     research_plan: str = Field(
         default="",
-        description="The research plan to submit (required for submit mode)",
+        description=(
+            "The research plan to submit (required for submit mode). \n"
+            "Should be a detailed, multi-paragraph plan addressing the research goal."
+        ),
+        json_schema_extra={"format": "textarea"},
     )
 
     # Reset mode fields (optional - None means keep current value)
