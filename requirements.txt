@@ -1,0 +1,12 @@
+openenv-core @ git+https://github.com/meta-pytorch/OpenEnv.git
+fastapi>=0.104.0
+uvicorn>=0.24.0
+pydantic>=2.0.0
+datasets>=2.14.0
+transformers>=4.35.0
+torch>=2.0.0
+sentencepiece>=0.1.99
+accelerate>=0.25.0
+nltk>=3.8.0
+sentence-transformers>=2.2.0
+scikit-learn>=1.3.0

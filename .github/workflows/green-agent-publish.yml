@@ -1,0 +1,92 @@
+name: Test and Publish Green Agent
+
+on:
+  pull_request:
+    paths:
+      - 'research_plan_env/green_agent/**'
+      - 'Dockerfile.green-agent'
+      - '.github/workflows/green-agent-publish.yml'
+  push:
+    branches:
+      - master
+      - main
+    tags:
+      - 'v*'
+
+jobs:
+  test-and-publish:
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Extract metadata for Docker
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ github.repository }}/green-agent
+          tags: |
+            type=ref,event=pr
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}
+            type=raw,value=latest,enable={{is_default_branch}}
+
+      - name: Build Docker image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: Dockerfile.green-agent
+          push: false
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          load: true
+          platforms: linux/amd64
+
+      - name: Start agent container
+        run: |
+          docker run -d -p 9009:9009 --name green-agent-container \
+            $(echo "${{ steps.meta.outputs.tags }}" | head -n1) \
+            --host 0.0.0.0 --port 9009
+          echo "Waiting for agent to start..."
+          timeout 120 bash -c 'until curl -sf http://localhost:9009/.well-known/agent.json > /dev/null 2>&1; do sleep 2; done' || {
+            echo "Agent failed to start within timeout"
+            docker logs green-agent-container
+            exit 1
+          }
+          echo "Agent is ready"
+
+      - name: Verify agent card
+        run: |
+          echo "Agent card:"
+          curl -s http://localhost:9009/.well-known/agent.json | jq .
+
+      - name: Stop container and show logs
+        if: always()
+        run: |
+          echo "=== Green Agent Container Logs ==="
+          docker logs green-agent-container || true
+          docker stop green-agent-container || true
+
+      - name: Log in to GitHub Container Registry
+        if: success() && github.event_name != 'pull_request'
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Push Docker image
+        if: success() && github.event_name != 'pull_request'
+        run: docker push --all-tags ghcr.io/${{ github.repository_owner }}/$(echo ${{ github.repository }} | cut -d'/' -f2)/green-agent
+
+      - name: Output image digest
+        if: success() && github.event_name != 'pull_request'
+        run: |
+          echo "## Green Agent Docker Image Published" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Tags:** ${{ steps.meta.outputs.tags }}" >> $GITHUB_STEP_SUMMARY

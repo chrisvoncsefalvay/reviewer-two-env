@@ -1,0 +1,24 @@
+name: Deploy to HuggingFace Spaces
+
+on:
+  push:
+    branches:
+      - main
+      - master
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          lfs: true
+
+      - name: Push to HuggingFace Spaces
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+        run: |
+          git remote add hf https://user:$HF_TOKEN@huggingface.co/spaces/chrisvoncsefalvay/research-plan-env || true
+          git push hf HEAD:main --force

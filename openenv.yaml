@@ -1,0 +1,6 @@
+spec_version: 1
+name: reviewer-two-env
+type: space
+runtime: fastapi
+app: research_plan_env.server.app:app
+port: 7860
