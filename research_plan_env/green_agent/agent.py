@@ -15,7 +15,6 @@ from a2a.server.tasks import TaskUpdater
 from a2a.types import (
     Artifact,
     DataPart,
-    InvalidRequestError,
     Message,
     TaskState,
     TextPart,
@@ -79,22 +78,27 @@ class ResearchPlanEvaluatorAgent:
             task_updater: Task updater for reporting progress and results.
         """
         try:
-            # Parse the evaluation request
-            text_parts = [p for p in message.parts if isinstance(p, TextPart)]
+            # Parse the evaluation request - unwrap Part union types
+            text_parts = []
+            for p in message.parts:
+                # Handle both direct TextPart and Part(root=TextPart) wrapper
+                actual_part = getattr(p, 'root', p)
+                if isinstance(actual_part, TextPart):
+                    text_parts.append(actual_part)
             if not text_parts:
-                raise InvalidRequestError("No text content in message")
+                raise ValueError("No text content in message")
 
             request_json = text_parts[0].text
             try:
                 request_data = json.loads(request_json)
                 eval_request = EvalRequest(**request_data)
             except (json.JSONDecodeError, ValueError) as e:
-                raise InvalidRequestError(f"Invalid EvalRequest: {e}") from e
+                raise ValueError(f"Invalid EvalRequest: {e}") from e
 
             # Validate required roles
             for role in self.required_roles:
                 if role not in eval_request.participants:
-                    raise InvalidRequestError(f"Missing required role: {role}")
+                    raise ValueError(f"Missing required role: {role}")
 
             # Parse configuration
             config = TaskConfig.from_config(eval_request.config)
@@ -109,27 +113,31 @@ class ResearchPlanEvaluatorAgent:
                 task_updater=task_updater,
             )
 
-            # Complete the task with result
-            task_updater.complete(
-                status_message="Evaluation complete",
-                artifacts=[
-                    Artifact(
-                        name="eval_result",
-                        parts=[
-                            DataPart(
-                                kind="data",
-                                data=result.model_dump(),
-                            ),
-                        ],
+            # Add result artifact and complete the task
+            await task_updater.add_artifact(
+                artifact_id="eval_result",
+                name="eval_result",
+                parts=[
+                    DataPart(
+                        kind="data",
+                        data=result.model_dump(),
                     ),
                 ],
             )
+            await task_updater.complete()
 
-        except InvalidRequestError:
+        except ValueError:
             raise
         except Exception as e:
             logger.exception("Evaluation failed")
-            task_updater.failed(f"Evaluation failed: {e}")
+            await task_updater.failed(
+                message=Message(
+                    kind="message",
+                    role="agent",
+                    parts=[TextPart(kind="text", text=f"Evaluation failed: {e}")],
+                    message_id="status-failed",
+                ),
+            )
 
     async def _evaluate_purple_agent(
         self,
@@ -159,9 +167,14 @@ class ResearchPlanEvaluatorAgent:
 
         obs = env.reset(**reset_kwargs)
 
-        task_updater.update_status(
+        await task_updater.update_status(
             state=TaskState.working,
-            message=f"Starting evaluation: {obs.rubric_count} criteria",
+            message=Message(
+                kind="message",
+                role="agent",
+                parts=[TextPart(kind="text", text=f"Starting evaluation: {obs.rubric_count} criteria")],
+                message_id="status-starting",
+            ),
         )
 
         # Build initial prompt for Purple Agent
@@ -176,9 +189,14 @@ class ResearchPlanEvaluatorAgent:
         while not obs.done and attempt < config.max_attempts:
             attempt += 1
 
-            task_updater.update_status(
+            await task_updater.update_status(
                 state=TaskState.working,
-                message=f"Attempt {attempt}/{config.max_attempts}",
+                message=Message(
+                    kind="message",
+                    role="agent",
+                    parts=[TextPart(kind="text", text=f"Attempt {attempt}/{config.max_attempts}")],
+                    message_id=f"status-attempt-{attempt}",
+                ),
             )
 
             # Send prompt to Purple Agent
@@ -186,6 +204,9 @@ class ResearchPlanEvaluatorAgent:
                 prompt = initial_prompt
             else:
                 prompt = self._build_feedback_prompt(obs)
+
+            logger.info(f"\n{'='*60}\nGREEN -> PURPLE (Attempt {attempt})\n{'='*60}")
+            logger.info(f"Prompt:\n{prompt[:1000]}{'...' if len(prompt) > 1000 else ''}")
 
             try:
                 response = await self.messenger.talk_to_agent(
@@ -197,6 +218,9 @@ class ResearchPlanEvaluatorAgent:
                 break
 
             research_plan = response.get("text", "")
+            logger.info(f"\n{'='*60}\nPURPLE -> GREEN (Attempt {attempt})\n{'='*60}")
+            logger.info(f"Response:\n{research_plan[:1000]}{'...' if len(research_plan) > 1000 else ''}")
+
             if not research_plan:
                 logger.warning("Purple Agent returned empty response")
                 break
@@ -326,20 +350,17 @@ class Executor(AgentExecutor):
             context: Request context with task and message info.
             event_queue: Queue for sending events back to client.
         """
-        # Get or create task
+        # Get task info - task is created by DefaultRequestHandler
         task = context.current_task
-        if task is None:
-            task = context.new_task(context.message)
-            event_queue.enqueue_event(task)
 
-        # Check terminal state
-        if task.status and task.status.state in (
+        # Check terminal state if task exists
+        if task and task.status and task.status.state in (
             TaskState.completed,
             TaskState.canceled,
             TaskState.failed,
             TaskState.rejected,
         ):
-            raise InvalidRequestError(
+            raise ValueError(
                 f"Task in terminal state: {task.status.state}"
             )
 
@@ -349,7 +370,11 @@ class Executor(AgentExecutor):
             self.agents[context_id] = ResearchPlanEvaluatorAgent()
 
         agent = self.agents[context_id]
-        task_updater = TaskUpdater(event_queue, task.id, task.contextId)
+
+        # Use task_id and context_id from context
+        task_id = context.task_id or (task.id if task else "unknown")
+        ctx_id = context.context_id
+        task_updater = TaskUpdater(event_queue, task_id, ctx_id)
 
         # Run the agent
         await agent.run(context.message, task_updater)
@@ -360,5 +385,4 @@ class Executor(AgentExecutor):
         event_queue: EventQueue,
     ) -> None:
         """Cancel is not supported."""
-        from a2a.types import UnsupportedOperationError
-        raise UnsupportedOperationError("Cancel not supported")
+        raise NotImplementedError("Cancel not supported")

@@ -8,11 +8,10 @@ import uuid
 from typing import Any
 
 import httpx
-from a2a.client import A2ACardResolver, Client
+from a2a.client import A2ACardResolver, ClientConfig, ClientFactory
 from a2a.types import (
     DataPart,
     Message,
-    MessageSendParams,
     Part,
     Task,
     TextPart,
@@ -38,8 +37,8 @@ def create_message(
         kind="message",
         role=role,
         parts=[TextPart(kind="text", text=text)],
-        messageId=uuid.uuid4().hex,
-        contextId=context_id or uuid.uuid4().hex,
+        message_id=uuid.uuid4().hex,
+        context_id=context_id or uuid.uuid4().hex,
     )
 
 
@@ -54,10 +53,12 @@ def merge_parts(parts: list[Part]) -> str:
     """
     result = []
     for part in parts:
-        if isinstance(part, TextPart):
-            result.append(part.text)
-        elif isinstance(part, DataPart):
-            result.append(str(part.data))
+        # Unwrap Part union type if needed
+        actual_part = getattr(part, 'root', part)
+        if isinstance(actual_part, TextPart):
+            result.append(actual_part.text)
+        elif isinstance(actual_part, DataPart):
+            result.append(str(actual_part.data))
     return "\n".join(result)
 
 
@@ -84,30 +85,37 @@ async def send_message(
         resolver = A2ACardResolver(http_client, agent_url)
         card = await resolver.get_agent_card()
 
-        client = Client(
-            http_client=http_client,
-            agent_card=card,
-        )
+        # Use ClientFactory for the new SDK API
+        config = ClientConfig(httpx_client=http_client, streaming=True)
+        factory = ClientFactory(config)
+        client = factory.create(card)
 
-        response = await client.send_message(
-            MessageSendParams(message=message),
-        )
+        response = client.send_message(message)
 
         # Process the response
-        result: dict[str, Any] = {"context_id": message.contextId}
+        result: dict[str, Any] = {"context_id": message.context_id}
 
         async for event in response:
             if isinstance(event, Message):
                 result["text"] = merge_parts(event.parts)
-                result["context_id"] = event.contextId
+                result["context_id"] = event.context_id
             elif isinstance(event, tuple) and len(event) == 2:
                 task, _ = event
                 if isinstance(task, Task) and task.status:
                     result["status"] = task.status.state
-                    if task.status.message:
+                    # Store status message as fallback
+                    if task.status.message and "text" not in result:
                         result["text"] = merge_parts(task.status.message.parts)
+                    # Extract text from artifacts (this is the actual response)
                     if task.artifacts:
                         result["artifacts"] = task.artifacts
+                        # Get text from first artifact's parts
+                        for artifact in task.artifacts:
+                            if artifact.parts:
+                                artifact_text = merge_parts(artifact.parts)
+                                if artifact_text:
+                                    result["text"] = artifact_text
+                                    break
 
         return result
 

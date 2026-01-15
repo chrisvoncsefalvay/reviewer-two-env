@@ -1,0 +1,53 @@
+# Dockerfile for the Research Plan Purple Agent
+# A2A-compatible agent using Claude Sonnet for research plan generation
+#
+# Build: docker build -f Dockerfile.purple-agent -t purple-agent .
+# Run: docker run -p 9010:9010 -e ANTHROPIC_API_KEY=your-key purple-agent
+
+FROM --platform=linux/amd64 python:3.11-slim
+
+# Create unprivileged user for security
+RUN useradd -m -u 1000 agent
+
+WORKDIR /home/agent
+
+# Install system dependencies
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    git \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy dependency files first for better caching
+COPY --chown=agent pyproject.toml ./
+COPY --chown=agent requirements.txt ./
+
+# Install Python dependencies
+RUN pip install --no-cache-dir --upgrade pip && \
+    pip install --no-cache-dir \
+    "a2a-sdk[http-server]>=0.3.20" \
+    "uvicorn>=0.38.0" \
+    "anthropic>=0.40.0" \
+    "httpx>=0.28.0" \
+    "pydantic>=2.0.0"
+
+# Copy application code
+COPY --chown=agent research_plan_env/ ./research_plan_env/
+
+# Set up Python path
+ENV PYTHONPATH=/home/agent \
+    HOME=/home/agent \
+    PATH=/home/agent/.local/bin:$PATH
+
+# Switch to unprivileged user
+USER agent
+
+# Expose the default port
+EXPOSE 9010
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=10s --start-period=30s --retries=3 \
+    CMD curl -f http://localhost:9010/.well-known/agent.json || exit 1
+
+# Entry point with configurable arguments
+ENTRYPOINT ["python", "-m", "research_plan_env.purple_agent.server"]
+CMD ["--host", "0.0.0.0", "--port", "9010"]

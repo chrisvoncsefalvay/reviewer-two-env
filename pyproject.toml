@@ -41,11 +41,19 @@ dependencies = [
     "nltk>=3.8.0",
     "sentence-transformers>=2.2.0",
     "scikit-learn>=1.3.0",
+    "a2a-sdk[http-server]>=0.3.22",
+    "anthropic>=0.76.0",
+    "starlette>=0.50.0",
 ]
 
 [project.optional-dependencies]
 green-agent = [
     "a2a-sdk[http-server]>=0.3.20",
+    "httpx>=0.28.0",
+]
+purple-agent = [
+    "a2a-sdk[http-server]>=0.3.20",
+    "anthropic>=0.40.0",
     "httpx>=0.28.0",
 ]
 dev = [
@@ -56,6 +64,7 @@ dev = [
 
 [project.scripts]
 research-plan-green-agent = "research_plan_env.green_agent.server:main"
+research-plan-purple-agent = "research_plan_env.purple_agent.server:main"
 
 [project.urls]
 Homepage = "https://github.com/chrisvoncsefalvay/reviewer-two-env"
